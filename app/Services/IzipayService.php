@@ -73,15 +73,22 @@ class IzipayService
                 'customer_email' => $datosVenta['customer']['email']
             ]);
 
-            $response = Http::withHeaders($headers)
-                ->timeout(30)
-                ->withOptions([
-                    'verify' => false, // Solo para desarrollo - NUNCA en producción
+            // Configurar opciones SSL según el entorno
+            $sslOptions = [];
+            if (config('app.env') === 'local' || config('app.debug')) {
+                // Solo en desarrollo
+                $sslOptions = [
+                    'verify' => false,
                     'curl' => [
                         CURLOPT_SSL_VERIFYPEER => false,
                         CURLOPT_SSL_VERIFYHOST => false,
                     ]
-                ])
+                ];
+            }
+
+            $response = Http::withHeaders($headers)
+                ->timeout(30)
+                ->withOptions($sslOptions)
                 ->post($this->apiUrl, $body);
 
             if (!$response->successful()) {
