@@ -513,9 +513,6 @@ Route::prefix('checkout')->group(function () {
         // Ruta para simular pago exitoso en pruebas
         Route::post('/simular-pago-exitoso', [CheckoutController::class, 'simularPagoExitoso']);
     });
-    
-    // Ruta de diagnóstico del sistema
-    Route::get('/diagnostico', [CheckoutController::class, 'diagnostico']);
 });
 
 // Rutas para métodos de envío

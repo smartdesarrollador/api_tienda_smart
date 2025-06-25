@@ -545,10 +545,8 @@ class CheckoutController extends Controller
             } elseif ($request->user()) {
                 $userId = $request->user()->id;
                 Log::info('Usuario autenticado detectado por request->user()', ['user_id' => $userId]);
-            }
-            
-            // Si no hay usuario autenticado, buscar por email en los datos personales
-            if (!$userId) {
+            } else {
+                // Buscar usuario por email en los datos personales
                 $email = $validated['datos_personales']['email'];
                 $usuario = User::where('email', $email)->first();
                 if ($usuario) {
@@ -571,36 +569,10 @@ class CheckoutController extends Controller
             foreach ($validated['items'] as $item) {
                 $producto = Producto::findOrFail($item['producto_id']);
                 if ($producto->stock < $item['cantidad']) {
-                    DB::rollBack(); // Asegurar rollback en caso de error
                     return response()->json([
                         'success' => false,
                         'message' => "Stock insuficiente para el producto: {$producto->nombre}. Stock disponible: {$producto->stock}"
                     ], 422);
-                }
-                
-                // Validar variación si existe
-                if (isset($item['variacion_id'])) {
-                    try {
-                        $variacion = \App\Models\VariacionProducto::findOrFail($item['variacion_id']);
-                        if ($variacion->producto_id != $item['producto_id']) {
-                            DB::rollBack();
-                            return response()->json([
-                                'success' => false,
-                                'message' => "La variación no pertenece al producto especificado"
-                            ], 422);
-                        }
-                    } catch (Exception $e) {
-                        DB::rollBack();
-                        Log::error('Error al validar variación de producto', [
-                            'variacion_id' => $item['variacion_id'],
-                            'producto_id' => $item['producto_id'],
-                            'error' => $e->getMessage()
-                        ]);
-                        return response()->json([
-                            'success' => false,
-                            'message' => "Variación de producto no válida"
-                        ], 422);
-                    }
                 }
             }
 
@@ -652,20 +624,7 @@ class CheckoutController extends Controller
             }
 
             // Calcular comisión automáticamente
-            try {
-                $comision = $metodoPago->calcularComision($validated['total']);
-            } catch (Exception $e) {
-                DB::rollBack();
-                Log::error('Error al calcular comisión del método de pago', [
-                    'metodo_pago_id' => $metodoPago->id,
-                    'total' => $validated['total'],
-                    'error' => $e->getMessage()
-                ]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Error al calcular comisión del método de pago'
-                ], 500);
-            }
+            $comision = $metodoPago->calcularComision($validated['total']);
 
             // Crear registro de pago
             $pago = Pago::create([
@@ -1402,67 +1361,6 @@ class CheckoutController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al verificar configuración: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * Endpoint de diagnóstico para verificar el estado del sistema
-     */
-    public function diagnostico(Request $request): JsonResponse
-    {
-        try {
-            $diagnostico = [
-                'timestamp' => now()->toISOString(),
-                'servidor' => [
-                    'php_version' => PHP_VERSION,
-                    'laravel_version' => app()->version(),
-                    'timezone' => config('app.timezone'),
-                    'debug_mode' => config('app.debug'),
-                ],
-                'base_datos' => [
-                    'conexion_activa' => false,
-                    'total_productos' => 0,
-                    'total_metodos_pago' => 0,
-                ],
-                'configuracion_izipay' => [
-                    'username_configurado' => !empty(config('services.izipay.username')),
-                    'password_configurado' => !empty(config('services.izipay.password')),
-                    'public_key_configurado' => !empty(config('services.izipay.public_key')),
-                    'sha256_key_configurado' => !empty(config('services.izipay.sha256_key')),
-                    'api_url' => config('services.izipay.api_url'),
-                ],
-                'permisos' => [
-                    'storage_writable' => is_writable(storage_path()),
-                    'logs_writable' => is_writable(storage_path('logs')),
-                ],
-                'memoria' => [
-                    'uso_actual' => memory_get_usage(true),
-                    'pico_memoria' => memory_get_peak_usage(true),
-                    'limite_memoria' => ini_get('memory_limit'),
-                ]
-            ];
-
-            // Verificar conexión a base de datos
-            try {
-                DB::connection()->getPdo();
-                $diagnostico['base_datos']['conexion_activa'] = true;
-                $diagnostico['base_datos']['total_productos'] = Producto::count();
-                $diagnostico['base_datos']['total_metodos_pago'] = MetodoPago::count();
-            } catch (Exception $e) {
-                $diagnostico['base_datos']['error'] = $e->getMessage();
-            }
-
-            return response()->json([
-                'success' => true,
-                'data' => $diagnostico
-            ], 200);
-
-        } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error en diagnóstico: ' . $e->getMessage(),
-                'error' => $e->getTraceAsString()
             ], 500);
         }
     }
