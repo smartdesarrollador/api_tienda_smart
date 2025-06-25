@@ -37,7 +37,13 @@ return [
         'public_key' => env('IZIPAY_PUBLIC_KEY'),
         'sha256_key' => env('IZIPAY_SHA256_KEY'),
         'api_url' => env('IZIPAY_API_URL', 'https://api.micuentaweb.pe/api-payment/V4/Charge/CreatePayment'),
-        'endpoint' => env('IZIPAY_ENDPOINT', 'https://static.micuentaweb.pe'),
+        'endpoint' => env('IZIPAY_ENDPOINT', 'https://api.micuentaweb.pe'),
+        'disable_ssl_verify' => env('IZIPAY_DISABLE_SSL_VERIFY', false),
+        'timeout' => env('IZIPAY_TIMEOUT', 60),
+        'connect_timeout' => env('IZIPAY_CONNECT_TIMEOUT', 30),
+        'retry_attempts' => env('IZIPAY_RETRY_ATTEMPTS', 3),
+        'retry_delay' => env('IZIPAY_RETRY_DELAY', 2000),
+        'debug_mode' => env('IZIPAY_DEBUG_MODE', false),
     ],
 
 ];

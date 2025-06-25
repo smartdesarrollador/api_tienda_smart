@@ -516,6 +516,9 @@ Route::prefix('checkout')->group(function () {
     
     // Ruta de diagnóstico del sistema
     Route::get('/diagnostico', [CheckoutController::class, 'diagnostico']);
+    
+    // Ruta específica para diagnóstico SSL de Izipay
+    Route::get('/diagnostico-ssl', [CheckoutController::class, 'diagnostico']);
 });
 
 // Rutas para métodos de envío

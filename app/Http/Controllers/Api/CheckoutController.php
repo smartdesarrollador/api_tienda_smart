@@ -1432,6 +1432,13 @@ class CheckoutController extends Controller
                     'sha256_key_configurado' => !empty(config('services.izipay.sha256_key')),
                     'api_url' => config('services.izipay.api_url'),
                 ],
+                'ssl_environment' => [
+                    'openssl_version' => OPENSSL_VERSION_TEXT,
+                    'curl_version' => curl_version(),
+                    'ca_bundle_paths' => $this->checkCABundlePaths(),
+                    'is_ubuntu' => $this->isUbuntuSystem(),
+                    'php_os_family' => PHP_OS_FAMILY,
+                ],
                 'permisos' => [
                     'storage_writable' => is_writable(storage_path()),
                     'logs_writable' => is_writable(storage_path('logs')),
@@ -1453,6 +1460,9 @@ class CheckoutController extends Controller
                 $diagnostico['base_datos']['error'] = $e->getMessage();
             }
 
+            // Test de conectividad SSL a Izipay
+            $diagnostico['izipay_connectivity'] = $this->testIzipayConnectivity();
+
             return response()->json([
                 'success' => true,
                 'data' => $diagnostico
@@ -1464,6 +1474,190 @@ class CheckoutController extends Controller
                 'message' => 'Error en diagnóstico: ' . $e->getMessage(),
                 'error' => $e->getTraceAsString()
             ], 500);
+        }
+    }
+
+    /**
+     * Verificar rutas de certificados CA
+     */
+    private function checkCABundlePaths(): array
+    {
+        $paths = [
+            '/etc/ssl/certs/ca-certificates.crt', // Ubuntu/Debian
+            '/etc/pki/tls/certs/ca-bundle.crt',   // CentOS/RHEL
+            '/etc/ssl/ca-bundle.pem',             // OpenSUSE
+            '/usr/local/share/certs/ca-root-nss.crt', // FreeBSD
+            '/etc/ssl/cert.pem',                  // Alpine Linux
+        ];
+
+        $result = [];
+        foreach ($paths as $path) {
+            $result[$path] = [
+                'exists' => file_exists($path),
+                'readable' => file_exists($path) && is_readable($path),
+                'size' => file_exists($path) ? filesize($path) : 0
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Detectar si es sistema Ubuntu
+     */
+    private function isUbuntuSystem(): bool
+    {
+        if (PHP_OS_FAMILY !== 'Linux') {
+            return false;
+        }
+
+        $osRelease = '/etc/os-release';
+        if (file_exists($osRelease)) {
+            $content = file_get_contents($osRelease);
+            return stripos($content, 'ubuntu') !== false;
+        }
+
+        return false;
+    }
+
+    /**
+     * Test de conectividad SSL a Izipay
+     */
+    private function testIzipayConnectivity(): array
+    {
+        $tests = [];
+        
+        // Test 1: Conectividad básica
+        $tests['basic_connectivity'] = $this->testBasicConnectivity();
+        
+        // Test 2: SSL con verificación completa
+        $tests['ssl_full_verification'] = $this->testSSLFullVerification();
+        
+        // Test 3: SSL sin verificación (solo para debug)
+        if (config('app.debug')) {
+            $tests['ssl_no_verification'] = $this->testSSLNoVerification();
+        }
+        
+        return $tests;
+    }
+
+    /**
+     * Test de conectividad básica
+     */
+    private function testBasicConnectivity(): array
+    {
+        try {
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, 'https://api.micuentaweb.pe');
+            curl_setopt($ch, CURLOPT_NOBODY, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            
+            $result = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
+            
+            return [
+                'success' => $result !== false && $httpCode > 0,
+                'http_code' => $httpCode,
+                'error' => $error ?: null
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Test SSL con verificación completa
+     */
+    private function testSSLFullVerification(): array
+    {
+        try {
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, 'https://api.micuentaweb.pe');
+            curl_setopt($ch, CURLOPT_NOBODY, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+            
+            // Intentar usar CA bundle si existe
+            $caBundlePaths = [
+                '/etc/ssl/certs/ca-certificates.crt',
+                '/etc/pki/tls/certs/ca-bundle.crt',
+                '/etc/ssl/ca-bundle.pem'
+            ];
+            
+            $caBundleUsed = null;
+            foreach ($caBundlePaths as $path) {
+                if (file_exists($path) && is_readable($path)) {
+                    curl_setopt($ch, CURLOPT_CAINFO, $path);
+                    $caBundleUsed = $path;
+                    break;
+                }
+            }
+            
+            $result = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            $sslInfo = curl_getinfo($ch);
+            curl_close($ch);
+            
+            return [
+                'success' => $result !== false && $httpCode > 0,
+                'http_code' => $httpCode,
+                'error' => $error ?: null,
+                'ca_bundle_used' => $caBundleUsed,
+                'ssl_verify_result' => $sslInfo['ssl_verify_result'] ?? null,
+                'certinfo' => $sslInfo['certinfo'] ?? null
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Test SSL sin verificación (solo para debug)
+     */
+    private function testSSLNoVerification(): array
+    {
+        try {
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, 'https://api.micuentaweb.pe');
+            curl_setopt($ch, CURLOPT_NOBODY, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            
+            $result = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
+            
+            return [
+                'success' => $result !== false && $httpCode > 0,
+                'http_code' => $httpCode,
+                'error' => $error ?: null,
+                'note' => 'SSL verification disabled - for debug only'
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
         }
     }
 

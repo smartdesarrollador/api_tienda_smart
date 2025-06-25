@@ -43,7 +43,9 @@ class IzipayService
         try {
             $headers = [
                 'Authorization' => 'Basic ' . base64_encode($this->username . ':' . $this->password),
-                'Content-Type' => 'application/json'
+                'Content-Type' => 'application/json',
+                'User-Agent' => 'TiendaSmart-Laravel/' . app()->version(),
+                'Accept' => 'application/json'
             ];
 
             $body = [
@@ -70,39 +72,64 @@ class IzipayService
             Log::info('Izipay: Generando formToken', [
                 'order_id' => $datosVenta['orderId'],
                 'amount' => $datosVenta['amount'],
-                'customer_email' => $datosVenta['customer']['email']
+                'customer_email' => $datosVenta['customer']['email'],
+                'api_url' => $this->apiUrl,
+                'environment' => config('app.env')
             ]);
 
-            // Configurar opciones SSL según el entorno
-            $sslOptions = [];
-            if (config('app.env') === 'local' || config('app.debug')) {
-                // Solo en desarrollo
-                $sslOptions = [
-                    'verify' => false,
-                    'curl' => [
-                        CURLOPT_SSL_VERIFYPEER => false,
-                        CURLOPT_SSL_VERIFYHOST => false,
-                    ]
-                ];
-            }
+            // Configurar opciones SSL más robustas
+            $sslOptions = $this->getSSLOptions();
 
+            Log::info('Izipay: Configuración SSL aplicada', [
+                'ssl_options' => $sslOptions,
+                'php_version' => PHP_VERSION,
+                'curl_version' => curl_version()['version'] ?? 'unknown'
+            ]);
+
+            // Realizar la petición con mejor manejo de errores
             $response = Http::withHeaders($headers)
-                ->timeout(30)
+                ->timeout(60) // Aumentar timeout
+                ->connectTimeout(30)
+                ->retry(3, 2000) // Reintentar 3 veces con 2 segundos de espera
                 ->withOptions($sslOptions)
                 ->post($this->apiUrl, $body);
 
+            // Log detallado de la respuesta
+            Log::info('Izipay: Respuesta recibida', [
+                'status_code' => $response->status(),
+                'headers' => $response->headers(),
+                'body_preview' => substr($response->body(), 0, 500),
+                'successful' => $response->successful()
+            ]);
+
             if (!$response->successful()) {
-                throw new Exception('Error en la API de Izipay: ' . $response->body());
+                $errorDetails = [
+                    'status_code' => $response->status(),
+                    'response_body' => $response->body(),
+                    'response_headers' => $response->headers(),
+                    'request_url' => $this->apiUrl,
+                    'request_headers' => $headers,
+                    'request_body' => $body
+                ];
+                
+                Log::error('Izipay: Error en la API', $errorDetails);
+                
+                throw new Exception(
+                    'Error en la API de Izipay (Status: ' . $response->status() . '): ' . 
+                    $response->body()
+                );
             }
 
             $responseData = $response->json();
 
             if (!isset($responseData['answer']['formToken'])) {
+                Log::error('Izipay: FormToken no encontrado en respuesta', [
+                    'response_data' => $responseData
+                ]);
                 throw new Exception('formToken no encontrado en la respuesta de Izipay');
             }
 
             $formToken = $responseData['answer']['formToken'];
-            // El publicKey ya viene con el formato correcto desde la configuración
             $publicKey = $this->publicKey;
 
             Log::info('Izipay: FormToken generado exitosamente', [
@@ -121,11 +148,152 @@ class IzipayService
             Log::error('Izipay: Error al generar formToken', [
                 'error' => $e->getMessage(),
                 'order_id' => $datosVenta['orderId'] ?? 'unknown',
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'environment' => config('app.env'),
+                'ssl_diagnostics' => $this->getSSLDiagnostics()
             ]);
 
             throw new Exception('Error al generar formToken de Izipay: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Obtener opciones SSL según el entorno
+     */
+    private function getSSLOptions(): array
+    {
+        // En desarrollo o si explícitamente se configura para deshabilitar SSL
+        if (config('app.env') === 'local' || 
+            config('app.debug') || 
+            config('services.izipay.disable_ssl_verify', false)) {
+            
+            Log::warning('Izipay: Verificación SSL deshabilitada para desarrollo');
+            
+            return [
+                'verify' => false,
+                'curl' => [
+                    CURLOPT_SSL_VERIFYPEER => false,
+                    CURLOPT_SSL_VERIFYHOST => false,
+                ]
+            ];
+        }
+
+        // Configuración SSL para producción
+        $sslOptions = [
+            'verify' => true,
+            'curl' => [
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_SSL_VERIFYHOST => 2,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 3,
+                CURLOPT_USERAGENT => 'TiendaSmart-cURL/' . app()->version(),
+                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_2_0,
+            ]
+        ];
+
+        // Intentar usar el bundle de CA incluido con cURL
+        $caBundle = $this->findCABundle();
+        if ($caBundle) {
+            $sslOptions['curl'][CURLOPT_CAINFO] = $caBundle;
+            Log::info('Izipay: Usando CA Bundle', ['ca_bundle' => $caBundle]);
+        }
+
+        // Configuraciones adicionales para sistemas específicos
+        if ($this->isUbuntuSystem()) {
+            $sslOptions['curl'][CURLOPT_CAPATH] = '/etc/ssl/certs/';
+            Log::info('Izipay: Configuración específica para Ubuntu aplicada');
+        }
+
+        return $sslOptions;
+    }
+
+    /**
+     * Encontrar el bundle de certificados CA
+     */
+    private function findCABundle(): ?string
+    {
+        $possiblePaths = [
+            '/etc/ssl/certs/ca-certificates.crt', // Ubuntu/Debian
+            '/etc/pki/tls/certs/ca-bundle.crt',   // CentOS/RHEL
+            '/etc/ssl/ca-bundle.pem',             // OpenSUSE
+            '/usr/local/share/certs/ca-root-nss.crt', // FreeBSD
+            '/etc/ssl/cert.pem',                  // Alpine Linux
+        ];
+
+        foreach ($possiblePaths as $path) {
+            if (file_exists($path) && is_readable($path)) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Detectar si es un sistema Ubuntu
+     */
+    private function isUbuntuSystem(): bool
+    {
+        if (PHP_OS_FAMILY !== 'Linux') {
+            return false;
+        }
+
+        $osRelease = '/etc/os-release';
+        if (file_exists($osRelease)) {
+            $content = file_get_contents($osRelease);
+            return stripos($content, 'ubuntu') !== false;
+        }
+
+        return false;
+    }
+
+    /**
+     * Obtener diagnósticos SSL
+     */
+    private function getSSLDiagnostics(): array
+    {
+        $diagnostics = [
+            'openssl_version' => OPENSSL_VERSION_TEXT,
+            'curl_version' => curl_version(),
+            'ca_bundle_found' => $this->findCABundle(),
+            'is_ubuntu' => $this->isUbuntuSystem(),
+            'php_os_family' => PHP_OS_FAMILY,
+        ];
+
+        // Verificar conectividad básica a Izipay
+        try {
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, 'https://api.micuentaweb.pe');
+            curl_setopt($ch, CURLOPT_NOBODY, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            
+            $caBundle = $this->findCABundle();
+            if ($caBundle) {
+                curl_setopt($ch, CURLOPT_CAINFO, $caBundle);
+            }
+            
+            $result = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
+            
+            $diagnostics['connectivity_test'] = [
+                'success' => $result !== false,
+                'http_code' => $httpCode,
+                'error' => $error
+            ];
+        } catch (Exception $e) {
+            $diagnostics['connectivity_test'] = [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+
+        return $diagnostics;
     }
 
     /**
@@ -270,7 +438,8 @@ class IzipayService
             'password_configurado' => !empty($this->password),
             'public_key_configurado' => !empty($this->publicKey),
             'sha256_key_configurado' => !empty($this->sha256Key),
-            'api_url' => $this->apiUrl
+            'api_url' => $this->apiUrl,
+            'ssl_diagnostics' => $this->getSSLDiagnostics()
         ];
 
         $configuracion['configuracion_completa'] = 
