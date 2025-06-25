@@ -67,7 +67,7 @@ Route::get('/', function () {
 
 //Ruta de prueba hola mundo para verificar que el servidor está funcionando
 Route::get('/test/hola-mundo', function () {
-    return response()->json(['message' => 'Hola Mundo']);
+    return response()->json(['message' => 'Hola Mundo desde la ruta de prueba']);
 });
 
 // Ruta de prueba para ZonaRepartoController
