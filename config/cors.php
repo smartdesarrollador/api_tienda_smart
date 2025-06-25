@@ -19,7 +19,12 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['*'],
+    /* 'allowed_origins' => ['*'], */
+
+    'allowed_origins' => [
+    'https://admintienda.smartdigitaltec.com',
+    'https://tienda.smartdigitaltec.com'
+],
 
     'allowed_origins_patterns' => [],
 
