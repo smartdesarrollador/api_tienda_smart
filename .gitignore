@@ -8,6 +8,7 @@
 .env
 .env.backup
 .env.production
+.env.production_vps
 .env.desarrollo
 .env.produccion
 .env.test
