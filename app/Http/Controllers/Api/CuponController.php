@@ -58,6 +58,7 @@ class CuponController extends Controller
 
             return CuponResource::collection($cupones)->response();
         } catch (Exception $e) {
+            //log de error
             Log::error("Error al obtener listado de cupones: " . $e->getMessage());
             return response()->json([
                 'message' => 'Error interno al procesar la solicitud.',
