@@ -22,9 +22,14 @@ return [
     /* 'allowed_origins' => ['*'], */
 
     'allowed_origins' => [
-    'https://admintienda.smartdigitaltec.com',
-    'https://tienda.smartdigitaltec.com'
-],
+        'https://admintienda.smartdigitaltec.com',
+        'https://tienda.smartdigitaltec.com',
+        'https://apitienda.smartdigitaltec.com',
+        'http://localhost:4200',
+        'http://localhost:3000',
+        'http://localhost:5000',
+        'http://localhost:7000',
+    ],
 
     'allowed_origins_patterns' => [],
 
