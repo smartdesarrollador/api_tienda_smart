@@ -1725,4 +1725,99 @@ class CheckoutController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Test de configuración de dominio para Izipay
+     */
+    public function testDomainConfig(Request $request): JsonResponse
+    {
+        try {
+            $currentDomain = $request->getHost();
+            $fullUrl = $request->getSchemeAndHttpHost();
+            
+            // Configuración actual de Izipay
+            $izipayConfig = [
+                'username' => config('services.izipay.username'),
+                'api_url' => config('services.izipay.api_url'),
+                'endpoint' => config('services.izipay.endpoint')
+            ];
+            
+            // Headers de la petición actual
+            $requestHeaders = [
+                'host' => $request->header('host'),
+                'origin' => $request->header('origin'),
+                'referer' => $request->header('referer'),
+                'user_agent' => $request->header('user-agent')
+            ];
+            
+            // Información del dominio
+            $domainInfo = [
+                'current_domain' => $currentDomain,
+                'full_url' => $fullUrl,
+                'protocol' => $request->getScheme(),
+                'is_https' => $request->isSecure(),
+                'request_uri' => $request->getRequestUri()
+            ];
+            
+            // Probable configuración necesaria en Izipay
+            $requiredIzipayConfig = [
+                'url_principal' => $fullUrl,
+                'url_retorno_test' => $fullUrl . '/checkout/success',
+                'url_retorno_produccion' => $fullUrl . '/checkout/success',
+                'url_ipn' => $fullUrl . '/api/checkout/izipay/ipn',
+                'dominio_autorizado' => $currentDomain
+            ];
+            
+            // Test de headers para Izipay
+            $mockIzipayHeaders = [
+                'Origin' => $fullUrl,
+                'Referer' => $fullUrl . '/checkout',
+                'Host' => $currentDomain,
+                'X-Forwarded-Host' => $currentDomain,
+                'X-Forwarded-Proto' => $request->getScheme()
+            ];
+            
+            // Verificar si el dominio actual coincide con algún patrón común
+            $domainAnalysis = [
+                'is_localhost' => in_array($currentDomain, ['localhost', '127.0.0.1']),
+                'is_ip_address' => filter_var($currentDomain, FILTER_VALIDATE_IP) !== false,
+                'has_ssl' => $request->isSecure(),
+                'domain_parts' => explode('.', $currentDomain),
+                'likely_production' => !in_array($currentDomain, ['localhost', '127.0.0.1']) && 
+                                     !str_contains($currentDomain, 'test') && 
+                                     !str_contains($currentDomain, 'dev')
+            ];
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'domain_info' => $domainInfo,
+                    'izipay_config' => $izipayConfig,
+                    'request_headers' => $requestHeaders,
+                    'domain_analysis' => $domainAnalysis,
+                    'required_izipay_config' => $requiredIzipayConfig,
+                    'mock_headers_for_izipay' => $mockIzipayHeaders,
+                    'recommendations' => [
+                        'action_needed' => 'Configurar dominio en Izipay Back Office',
+                        'current_domain' => $currentDomain,
+                        'configured_for' => 'senshi.pe (según imagen proporcionada)',
+                        'status' => 'DOMAIN_MISMATCH_LIKELY_CAUSE',
+                        'next_steps' => [
+                            '1. Acceder al Back Office de Izipay',
+                            '2. Cambiar URL principal a: ' . $fullUrl,
+                            '3. Configurar URLs de retorno',
+                            '4. Configurar URL de IPN',
+                            '5. Guardar cambios y probar nuevamente'
+                        ]
+                    ]
+                ]
+            ], 200);
+            
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al analizar configuración de dominio: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 } 

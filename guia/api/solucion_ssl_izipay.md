@@ -1,8 +1,89 @@
 # Solución de Problemas SSL con Izipay en VPS Ubuntu
 
+## ⚠️ **PROBLEMA PRINCIPAL IDENTIFICADO: Configuración de Dominio**
+
+**El problema más probable es que las credenciales de Izipay están configuradas para `senshi.pe` pero estás intentando usarlas desde `tienda.smartdigitaltec.com`.**
+
+### Verificación rápida del problema de dominio
+
+```bash
+GET https://tienda.smartdigitaltec.com/api/checkout/test-domain-config
+```
+
 ## Problema
 
-El método de pago Izipay funciona en desarrollo local pero falla en el VPS Ubuntu con error 500, probablemente debido a problemas SSL/TLS.
+El método de pago Izipay funciona en desarrollo local pero falla en el VPS Ubuntu con error 500, probablemente debido a problemas SSL/TLS **Y configuración de dominio**.
+
+## 🎯 **Solución Principal: Configurar Dominio en Izipay**
+
+### **Paso 1: Acceder al Back Office de Izipay**
+
+1. Ir a: https://secure.micuentaweb.pe/vads-merchant/
+2. Iniciar sesión con las credenciales del comercio
+3. Ir a **Configuración** → **Configuración de la tienda**
+
+### **Paso 2: Actualizar URLs en Izipay**
+
+**Cambiar la configuración actual:**
+
+-   ❌ **URL actual:** `https://senshi.pe`
+-   ✅ **URL nueva:** `https://tienda.smartdigitaltec.com`
+
+**URLs específicas a configurar:**
+
+1. **URL principal de la tienda:**
+
+    ```
+    https://tienda.smartdigitaltec.com
+    ```
+
+2. **URL de retorno en modo test:**
+
+    ```
+    https://tienda.smartdigitaltec.com/checkout/success
+    ```
+
+3. **URL de retorno en modo producción:**
+
+    ```
+    https://tienda.smartdigitaltec.com/checkout/success
+    ```
+
+4. **URL de notificación IPN:**
+
+    ```
+    https://tienda.smartdigitaltec.com/api/checkout/izipay/ipn
+    ```
+
+5. **URLs de error/cancelación:**
+    ```
+    https://tienda.smartdigitaltec.com/checkout/error
+    https://tienda.smartdigitaltec.com/checkout/cancel
+    ```
+
+### **Paso 3: Verificar configuración**
+
+Después de guardar los cambios en Izipay, verificar con:
+
+```bash
+curl -X GET https://tienda.smartdigitaltec.com/api/checkout/test-domain-config
+```
+
+## 🔧 **Alternativas si no puedes cambiar la configuración de Izipay:**
+
+### **Opción A: Solicitar configuración adicional**
+
+Contactar al soporte de Izipay para:
+
+-   Agregar `tienda.smartdigitaltec.com` como dominio autorizado adicional
+-   Crear una configuración separada para tu dominio
+
+### **Opción B: Usar subdomain de senshi.pe (temporal)**
+
+Si tienes control del dominio senshi.pe:
+
+-   Crear un subdomain: `tienda.senshi.pe`
+-   Configurar un proxy o redirect hacia tu VPS
 
 ## Diagnóstico
 
